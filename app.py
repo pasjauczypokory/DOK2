@@ -172,12 +172,6 @@ if st.button("Generuj Oświadczenie", type="primary"):
                                     wartosc = imie_input
                                 elif "miejscowość" in n_lower or "miejscowosc" in n_lower:
                                     wartosc = dane_z_api['miejscowosc'] if dane_z_api else "Warszawa"
-                                elif "dzień" in n_lower or "dzien" in n_lower:
-                                    wartosc = wybrana_data.strftime("%d")
-                                elif "miesiac" in n_lower or "miesiąc" in n_lower:
-                                    wartosc = wybrana_data.strftime("%m")
-                                elif "rok" in n_lower:
-                                    wartosc = wybrana_data.strftime("%Y")
                                 elif "data" in n_lower:
                                     wartosc = wybrana_data.strftime("%d.%m.%Y")
 
