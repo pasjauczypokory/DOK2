@@ -32,20 +32,31 @@ def pobierz_dane_z_api(nip):
             if dane:
                 adres = dane.get('workingAddress') or dane.get('residenceAddress') or ""
                 krs = dane.get('krs', '')
+                
+                # Próba automatycznego wyciągnięcia Imienia i Nazwiska z nazwy JDG
+                pelna_nazwa = dane.get('name', '')
+                wykryte_reprezentant = ""
+                if not krs and pelna_nazwa:
+                    # Szukamy pierwszych dwóch słów pisanych dużymi literami (zazwyczaj Imię i Nazwisko w CEIDG)
+                    slowa = pelna_nazwa.split()
+                    if len(slowa) >= 2:
+                        wykryte_reprezentant = f"{slowa[0].capitalize()} {slowa[1].capitalize()}"
+
                 return {
-                    "nazwa": dane.get('name', ''),
+                    "nazwa": pelna_nazwa,
                     "regon": dane.get('regon', ''),
                     "krs": krs or "Brak",
                     "adres": adres,
-                    "czy_krs": bool(krs) 
+                    "czy_krs": bool(krs),
+                    "wykryte_reprezentant": wykryte_reprezentant
                 }
         return None
     except Exception as e:
         return None
 
 # --- WYGLĄD STRONY ---
-st.set_page_config(page_title="Generator RODO", page_icon="🗂️")
-st.title("🗂️ Generator Umów Powierzenia")
+st.set_page_config(page_title="Generator Oświadczeń", page_icon="📝")
+st.title("🗂️ Generator Oświadczeń")
 st.divider() 
 
 # --- RESZTA APLIKACJI ---
@@ -54,9 +65,10 @@ col_nip, col_data = st.columns(2)
 with col_nip:
     nip_input = st.text_input("Wpisz NIP (10 cyfr)")
 with col_data:
-    wybrana_data = st.date_input("Data zawarcia umowy:", datetime.date.today())
+    wybrana_data = st.date_input("Data na dokumencie:", datetime.date.today())
 
 nazwa_do_edycji = ""
+reprezentant_auto = ""
 dane_z_api = None
 czy_krs = False
 
@@ -66,33 +78,40 @@ if nip_input and len(nip_input.strip().replace("-", "")) == 10:
     if dane_z_api:
         nazwa_do_edycji = dane_z_api['nazwa']
         czy_krs = dane_z_api['czy_krs']
+        reprezentant_auto = dane_z_api['wykryte_reprezentant']
         
         if czy_krs:
-            st.success(f"🏢 Wykryto Spółkę (KRS: {dane_z_api['krs']}). System użyje wzoru KRS.")
+            st.success(f"🏢 Wykryto Spółkę (KRS: {dane_z_api['krs']}). System automatycznie użyje wzoru KRS.")
         else:
-            st.info("👤 Wykryto działalność (CEIDG). System użyje wzoru JDG.")
+            st.info("👤 Wykryto działalność (CEIDG). System automatycznie użyje wzoru JDG.")
 
 st.header("2. Dane firmy")
-finalna_nazwa_firmy = st.text_input("Pełna nazwa firmy (edytuj, jeśli brakuje imienia i nazwiska w JDG):", value=nazwa_do_edycji)
+finalna_nazwa_firmy = st.text_input("Pełna nazwa firmy (edytuj, jeśli zachodzi potrzeba):", value=nazwa_do_edycji)
 
-st.header("3. Dane uzupełniające")
-col1, col2 = st.columns(2)
-with col1:
-    imie_input = st.text_input("Imię i nazwisko reprezentanta")
-with col2:
-    # Okienko na PESEL
-    pesel_input = st.text_input("PESEL (szczególnie dla JDG)")
+# BLOK DANYCH UZUPEŁNIAJĄCYCH (Pokazuje się TYLKO dla działalności gospodarczej - CEIDG)
+imie_input = ""
+pesel_input = ""
+nr_dowodu_input = ""
+
+if not czy_krs and dane_z_api:
+    st.header("3. Dane uzupełniające właściciela")
+    col1, col2 = st.columns(2)
+    with col1:
+        imie_input = st.text_input("Imię i nazwisko reprezentanta:", value=reprezentant_auto)
+        nr_dowodu_input = st.text_input("Seria i nr Dowodu Osobistego:")
+    with col2:
+        pesel_input = st.text_input("PESEL:")
 
 # --- LOGIKA GENEROWANIA ---
-if st.button("Generuj Umowę", type="primary"):
+if st.button("Generuj Oświadczenie", type="primary"):
     nip = nip_input.strip().replace("-", "")
     
     if len(nip) != 10:
         st.warning("Podaj poprawny, 10-cyfrowy NIP!")
     elif not finalna_nazwa_firmy:
         st.error("Uzupełnij nazwę firmy!")
-    elif not imie_input:
-        st.error("Podaj imię i nazwisko reprezentanta!")
+    elif not czy_krs and not imie_input:
+        st.error("Uzupełnij imię i nazwisko właściciela!")
     else:
         if not dane_z_api:
             st.error("Nie znaleziono firmy o takim NIP w bazie MF.")
@@ -108,7 +127,6 @@ if st.button("Generuj Umowę", type="primary"):
                     doc = fitz.open(szablon)
                     font_bytes = get_font_bytes()
                     
-                    # ETAP 1: WYPEŁNIANIE W PAMIĘCI
                     for page in doc:
                         if font_bytes:
                             page.insert_font(fontname="Roboto", fontbuffer=font_bytes)
@@ -121,7 +139,6 @@ if st.button("Generuj Umowę", type="primary"):
                                 n_lower = nazwa_pola.strip().lower()
                                 wartosc = ""
                                 
-                                # Nasz sprawdzony, uniwersalny skaner pól:
                                 if "firma" in n_lower or "nazwa" in n_lower:
                                     wartosc = finalna_nazwa_firmy
                                 elif "adres" in n_lower:
@@ -134,6 +151,8 @@ if st.button("Generuj Umowę", type="primary"):
                                     wartosc = dane_z_api['krs'] if dane_z_api else ""
                                 elif "pesel" in n_lower:
                                     wartosc = pesel_input
+                                elif nazwa_pola == "DO" or "dowód" in n_lower or "dowod" in n_lower:
+                                    wartosc = nr_dowodu_input
                                 elif "imie" in n_lower or "nazwisko" in n_lower or "reprezentant" in n_lower:
                                     wartosc = imie_input
                                 elif "miejscowość" in n_lower or "miejscowosc" in n_lower:
@@ -150,7 +169,7 @@ if st.button("Generuj Umowę", type="primary"):
                                 if wartosc:
                                     fs = widget.text_fontsize
                                     if fs <= 0:
-                                        fs = 8 # Zachowujemy sprawdzony rozmiar 8
+                                        fs = 8
                                     pola_do_narysowania.append((widget.rect, str(wartosc), fs))
                         
                         for annot in page.annots():
@@ -168,12 +187,10 @@ if st.button("Generuj Umowę", type="primary"):
                             else:
                                 page.insert_textbox(rect, text, fontsize=fs, color=(0,0,0))
                     
-                    # ETAP 2: ZAMIANA NA "CYFROWY SKAN" Z KOMPRESJĄ (odchudzanie pliku)
                     doc_flat = fitz.open()
                     for page in doc:
                         mat = fitz.Matrix(1.5, 1.5) 
                         pix = page.get_pixmap(matrix=mat, alpha=False) 
-                        
                         nowa_strona = doc_flat.new_page(width=page.rect.width, height=page.rect.height)
                         
                         try:
@@ -193,23 +210,21 @@ if st.button("Generuj Umowę", type="primary"):
                     st.error(f"Szczegóły błędu dla pliku {szablon}: {e}")
                     return None
             
-            # AUTOMATYCZNY WYBÓR WZORU
             plik_umowy = "KRS.pdf" if czy_krs else "JDG.pdf"
             
             st.session_state.bufor_umowa = generuj_plik(plik_umowy)
             st.session_state.bezpieczna_nazwa_firmy = bezpieczna_nazwa
             st.session_state.plik_umowy = plik_umowy
-            
             st.session_state.wygenerowano = True
 
 if st.session_state.wygenerowano:
     if st.session_state.bufor_umowa:
-        st.success("Wygenerowano pomyślnie! Plik jest zabezpieczony (spłaszczony).")
+        st.success("Miłego dnia!")
         
         st.download_button(
-            "⬇️ Pobierz Umowę RODO", 
+            "⬇️ Pobierz Oświadczenie", 
             data=st.session_state.bufor_umowa, 
-            file_name=f"Umowa_RODO_{st.session_state.bezpieczna_nazwa_firmy}.pdf", 
+            file_name=f"Oswiadczenie_{st.session_state.bezpieczna_nazwa_firmy}.pdf", 
             mime="application/pdf"
         )
     else:
